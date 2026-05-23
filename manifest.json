@@ -1,0 +1,36 @@
+{
+  "plugin_id": "silo.tvdb",
+  "version": "1.2.17",
+  "checksum": "__CHECKSUM__",
+  "silo_api_version": "v1",
+  "supported_platforms": [
+    {
+      "os": "darwin",
+      "arch": "arm64"
+    },
+    {
+      "os": "linux",
+      "arch": "amd64"
+    },
+    {
+      "os": "linux",
+      "arch": "arm64"
+    }
+  ],
+  "capabilities": [
+    {
+      "type": "metadata_provider.v1",
+      "id": "tvdb",
+      "display_name": "TVDB",
+      "description": "TheTVDB — metadata for TV series.",
+      "metadata": {
+        "default_priority": {
+          "series": 2,
+          "season": 2,
+          "episode": 2
+        }
+      }
+    }
+  ],
+  "global_config_schema": []
+}
