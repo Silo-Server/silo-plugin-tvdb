@@ -118,10 +118,12 @@ func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery
 
 	var out []metadata.SearchResult
 	for _, r := range results {
+		ids := map[string]string{"tvdb": r.TVDBID}
+		fillRemoteIDs(ids, r.RemoteIDs)
 		out = append(out, metadata.SearchResult{
 			Name:        r.Name,
 			Year:        extractYear(r.Year),
-			ProviderIDs: map[string]string{"tvdb": r.TVDBID},
+			ProviderIDs: ids,
 			ImageURL:    r.ImageURL,
 			Overview:    r.Overview,
 			Provider:    p.Slug(),

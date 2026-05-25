@@ -12,6 +12,63 @@ import (
 	"github.com/Silo-Server/silo-plugin-tvdb/metadata"
 )
 
+func TestProviderSearchByTitleIncludesRemoteIDs(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"token": "test-token",
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/search":
+			if r.URL.Query().Get("query") != "The Rookie: Feds" {
+				t.Fatalf("query = %q, want The Rookie: Feds", r.URL.Query().Get("query"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": []map[string]any{{
+					"name":     "The Rookie: Feds",
+					"year":     "2022",
+					"tvdb_id":  "420105",
+					"overview": "A spinoff series.",
+					"remote_ids": []map[string]any{
+						{"type": 12, "id": "201992", "sourceName": "TheMovieDB.com"},
+						{"type": 2, "id": "tt18076310", "sourceName": "IMDB"},
+					},
+				}},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(1000)
+	client.SetBaseURL(server.URL)
+	p := NewProviderWithClient(client)
+
+	results, err := p.Search(context.Background(), metadata.SearchQuery{
+		Title:       "The Rookie: Feds",
+		ContentType: "series",
+	})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	ids := results[0].ProviderIDs
+	if ids["tvdb"] != "420105" || ids["tmdb"] != "201992" || ids["imdb"] != "tt18076310" {
+		t.Fatalf("provider ids = %+v, want tvdb/tmdb/imdb", ids)
+	}
+}
+
 func TestGetImagesReturnsArtworkImageURLs(t *testing.T) {
 	t.Parallel()
 
