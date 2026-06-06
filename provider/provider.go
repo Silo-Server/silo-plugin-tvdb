@@ -663,17 +663,44 @@ func convertCharacters(chars []Character) []models.ItemPerson {
 
 func fillRemoteIDs(ids map[string]string, remoteIDs []RemoteID) {
 	for _, r := range remoteIDs {
-		switch r.Type {
-		case 2: // IMDb
-			if r.ID != "" && ids["imdb"] == "" {
+		if r.ID == "" {
+			continue
+		}
+		switch remoteIDProvider(r) {
+		case "imdb":
+			if ids["imdb"] == "" {
 				ids["imdb"] = r.ID
 			}
-		case 12: // TMDB
-			if r.ID != "" && ids["tmdb"] == "" {
+		case "tmdb":
+			if ids["tmdb"] == "" {
 				ids["tmdb"] = r.ID
 			}
 		}
 	}
+}
+
+func remoteIDProvider(r RemoteID) string {
+	switch r.Type {
+	case 2:
+		return "imdb"
+	case 12:
+		return "tmdb"
+	}
+
+	switch normalizeRemoteIDSourceName(r.SourceName) {
+	case "imdb", "imdbcom":
+		return "imdb"
+	case "tmdb", "themoviedb", "themoviedbcom", "themoviedatabase":
+		return "tmdb"
+	default:
+		return ""
+	}
+}
+
+func normalizeRemoteIDSourceName(source string) string {
+	source = strings.ToLower(strings.TrimSpace(source))
+	replacer := strings.NewReplacer(" ", "", ".", "", "-", "", "_", "")
+	return replacer.Replace(source)
 }
 
 func (p *Provider) findPersonByRemoteID(ctx context.Context, remoteID string) (int, error) {

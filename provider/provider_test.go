@@ -69,6 +69,85 @@ func TestProviderSearchByTitleIncludesRemoteIDs(t *testing.T) {
 	}
 }
 
+func TestGetSeriesMetadataIncludesSourceNameRemoteIDs(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data":   map[string]any{"token": "test-token"},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/series/100/extended":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"id":       100,
+					"name":     "Series",
+					"overview": "Series overview",
+					"remoteIds": []map[string]any{
+						{"type": 0, "id": "201992", "sourceName": "TheMovieDB.com"},
+						{"type": 0, "id": "tt18076310", "sourceName": "IMDb"},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(1000)
+	client.SetBaseURL(server.URL)
+	p := NewProviderWithClient(client)
+
+	result, err := p.GetMetadata(context.Background(), metadata.MetadataRequest{
+		ProviderIDs: map[string]string{"tvdb": "100"},
+		ContentType: "series",
+	})
+	if err != nil {
+		t.Fatalf("GetMetadata() error = %v", err)
+	}
+	if result.ProviderIDs["tvdb"] != "100" || result.ProviderIDs["tmdb"] != "201992" || result.ProviderIDs["imdb"] != "tt18076310" {
+		t.Fatalf("provider ids = %+v, want tvdb/tmdb/imdb", result.ProviderIDs)
+	}
+}
+
+func TestFillRemoteIDsUsesTypeAndSourceNameWithoutOverwrite(t *testing.T) {
+	t.Parallel()
+
+	ids := map[string]string{
+		"imdb": "nm-existing",
+		"tmdb": "existing-tmdb",
+	}
+	fillRemoteIDs(ids, []RemoteID{
+		{Type: 0, ID: "tt-source", SourceName: "IMDb"},
+		{Type: 0, ID: "source-tmdb", SourceName: "The Movie Database"},
+		{Type: 2, ID: "tt-type", SourceName: ""},
+		{Type: 12, ID: "type-tmdb", SourceName: ""},
+	})
+
+	if ids["imdb"] != "nm-existing" {
+		t.Fatalf("imdb overwritten: got %q", ids["imdb"])
+	}
+	if ids["tmdb"] != "existing-tmdb" {
+		t.Fatalf("tmdb overwritten: got %q", ids["tmdb"])
+	}
+
+	ids = map[string]string{}
+	fillRemoteIDs(ids, []RemoteID{
+		{Type: 0, ID: "source-tmdb", SourceName: "TheMovieDB.com"},
+		{Type: 0, ID: "tt-source", SourceName: "imdb.com"},
+	})
+
+	if ids["tmdb"] != "source-tmdb" || ids["imdb"] != "tt-source" {
+		t.Fatalf("provider ids = %+v, want source-name tmdb/imdb", ids)
+	}
+}
+
 func TestGetImagesReturnsArtworkImageURLs(t *testing.T) {
 	t.Parallel()
 
