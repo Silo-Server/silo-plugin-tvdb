@@ -21,6 +21,18 @@ const (
 	defaultAPIKey   = "9bad61f9-16d5-468d-9c98-4c4038c13706"
 	maxRetries      = 3
 	maxResponseBody = 2 << 20 // 2 MB
+
+	// episodesCacheTTL bounds how long a fetched bulk episode list is reused.
+	// The server fetches one season at a time but the bulk endpoint returns the
+	// whole series, so a short TTL lets every season of one series' refresh pass
+	// share a single fetch while keeping the data fresh.
+	episodesCacheTTL = 5 * time.Minute
+	// maxEpisodePages caps pagination of the bulk episodes endpoint (500/page)
+	// so a malformed paging response cannot spin forever.
+	maxEpisodePages = 100
+	// episodesCacheMaxEntries triggers an opportunistic purge of expired entries
+	// so the cache cannot grow without bound during a long refresh run.
+	episodesCacheMaxEntries = 512
 )
 
 // Client is an HTTP client for the TVDB v4 API.
@@ -32,6 +44,21 @@ type Client struct {
 	tokenMu    sync.RWMutex // protects token read/write
 	refreshMu  sync.Mutex   // serialises re-auth attempts
 	limiter    *rate.Limiter
+
+	episodesCacheMu sync.Mutex
+	episodesCache   map[string]episodesCacheEntry
+}
+
+// seriesEpisodes is the assembled (all-pages) result of the bulk episodes
+// endpoint: the series record plus every episode for one season-type/language.
+type seriesEpisodes struct {
+	series   SeriesBaseRecord
+	episodes []EpisodeBaseRecord
+}
+
+type episodesCacheEntry struct {
+	data      *seriesEpisodes
+	fetchedAt time.Time
 }
 
 // NewClient creates a TVDB API client with the given rate limit (requests per
@@ -41,10 +68,11 @@ func NewClient(rateLimit int) *Client {
 		rateLimit = 50
 	}
 	return &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		apiKey:     defaultAPIKey,
-		baseURL:    defaultBaseURL,
-		limiter:    rate.NewLimiter(rate.Limit(rateLimit), rateLimit),
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		apiKey:        defaultAPIKey,
+		baseURL:       defaultBaseURL,
+		limiter:       rate.NewLimiter(rate.Limit(rateLimit), rateLimit),
+		episodesCache: make(map[string]episodesCacheEntry),
 	}
 }
 
@@ -365,4 +393,86 @@ func (c *Client) GetEpisodeTranslation(ctx context.Context, id int, lang3 string
 		return nil, err
 	}
 	return &resp.Data, nil
+}
+
+// ---------------------------------------------------------------------------
+// Bulk episodes (replaces the per-episode translation N+1)
+// ---------------------------------------------------------------------------
+
+// GetSeriesEpisodes fetches one page of a series' episodes for the given
+// season-type. When lang3 is "" the base (series original-language) list is
+// returned; when lang3 is a 3-letter ISO-639-2 code the translated list is
+// returned. It returns the page's data plus pagination links (nil if absent).
+func (c *Client) GetSeriesEpisodes(ctx context.Context, id int, seasonType, lang3 string, page int) (*SeriesEpisodesData, *links, error) {
+	var path string
+	if lang3 == "" {
+		path = fmt.Sprintf("/series/%d/episodes/%s?page=%d", id, url.PathEscape(seasonType), page)
+	} else {
+		path = fmt.Sprintf("/series/%d/episodes/%s/%s?page=%d", id, url.PathEscape(seasonType), url.PathEscape(lang3), page)
+	}
+	var resp apiResponse[SeriesEpisodesData]
+	if err := c.doGet(ctx, path, &resp); err != nil {
+		return nil, nil, err
+	}
+	return &resp.Data, resp.Links, nil
+}
+
+// getAllSeriesEpisodes returns every episode for a series/season-type/language,
+// assembling all pages of the bulk endpoint. Results are memoised for
+// episodesCacheTTL keyed by (series, season-type, language) so that a series'
+// per-season refresh pass shares a single fetch, and so a series with no
+// translations is not re-fetched per season (negative caching).
+func (c *Client) getAllSeriesEpisodes(ctx context.Context, id int, seasonType, lang3 string) (*seriesEpisodes, error) {
+	key := fmt.Sprintf("%d|%s|%s", id, seasonType, lang3)
+	if cached, ok := c.lookupEpisodesCache(key); ok {
+		return cached, nil
+	}
+
+	var (
+		series   SeriesBaseRecord
+		episodes []EpisodeBaseRecord
+	)
+	for page := 0; page < maxEpisodePages; page++ {
+		data, lnks, err := c.GetSeriesEpisodes(ctx, id, seasonType, lang3, page)
+		if err != nil {
+			return nil, err
+		}
+		if page == 0 {
+			series = data.Series
+		}
+		episodes = append(episodes, data.Episodes...)
+		if len(data.Episodes) == 0 || lnks == nil || lnks.Next == nil || *lnks.Next == "" {
+			break
+		}
+	}
+
+	result := &seriesEpisodes{series: series, episodes: episodes}
+	c.storeEpisodesCache(key, result)
+	return result, nil
+}
+
+// lookupEpisodesCache returns a cached entry if present and not expired.
+func (c *Client) lookupEpisodesCache(key string) (*seriesEpisodes, bool) {
+	c.episodesCacheMu.Lock()
+	defer c.episodesCacheMu.Unlock()
+	entry, ok := c.episodesCache[key]
+	if !ok || time.Since(entry.fetchedAt) > episodesCacheTTL {
+		return nil, false
+	}
+	return entry.data, true
+}
+
+// storeEpisodesCache records a result, opportunistically purging expired entries
+// when the cache grows large.
+func (c *Client) storeEpisodesCache(key string, data *seriesEpisodes) {
+	c.episodesCacheMu.Lock()
+	defer c.episodesCacheMu.Unlock()
+	if len(c.episodesCache) >= episodesCacheMaxEntries {
+		for k, e := range c.episodesCache {
+			if time.Since(e.fetchedAt) > episodesCacheTTL {
+				delete(c.episodesCache, k)
+			}
+		}
+	}
+	c.episodesCache[key] = episodesCacheEntry{data: data, fetchedAt: time.Now()}
 }

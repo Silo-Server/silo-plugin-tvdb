@@ -186,6 +186,15 @@ type SeasonExtendedRecord struct {
 // Episodes
 // ---------------------------------------------------------------------------
 
+// SeriesEpisodesData is the data object returned by the bulk episodes endpoint
+// GET /series/{id}/episodes/{season-type}[/{lang}]. It carries the series record
+// plus a page of that series' episodes (already translated when a language is
+// requested).
+type SeriesEpisodesData struct {
+	Series   SeriesBaseRecord    `json:"series"`
+	Episodes []EpisodeBaseRecord `json:"episodes"`
+}
+
 // EpisodeBaseRecord is an episode from a season extended response.
 type EpisodeBaseRecord struct {
 	ID                int     `json:"id"`

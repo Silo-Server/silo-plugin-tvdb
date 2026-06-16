@@ -438,6 +438,39 @@ func newTranslationTestServer(t *testing.T, translationCalls *atomic.Int32) *htt
 				},
 			})
 
+		case r.Method == http.MethodGet && r.URL.Path == "/series/100/episodes/official":
+			// Bulk base (original-language) episode list for the whole series.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"series": map[string]any{"id": 100, "originalLanguage": "jpn"},
+					"episodes": []map[string]any{
+						{"id": 301, "name": "Japanese Ep 1", "overview": "JP overview 1", "number": 1, "seasonNumber": 1},
+						{"id": 302, "name": "Japanese Ep 2", "overview": "JP overview 2", "number": 2, "seasonNumber": 1},
+						{"id": 303, "name": "Japanese Ep 3", "overview": "JP overview 3", "number": 3, "seasonNumber": 1},
+					},
+				},
+				"links": map[string]any{"next": nil},
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/series/100/episodes/official/eng":
+			// Bulk translated episode list — one call for the whole series.
+			if translationCalls != nil {
+				translationCalls.Add(1)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"series": map[string]any{"id": 100, "originalLanguage": "jpn"},
+					"episodes": []map[string]any{
+						{"id": 301, "name": "English Ep 1", "overview": "EN overview 1", "number": 1, "seasonNumber": 1},
+						{"id": 302, "name": "English Ep 2", "overview": "EN overview 2", "number": 2, "seasonNumber": 1},
+						{"id": 303, "name": "English Ep 3", "overview": "EN overview 3", "number": 3, "seasonNumber": 1},
+					},
+				},
+				"links": map[string]any{"next": nil},
+			})
+
 		case r.Method == http.MethodGet && r.URL.Path == "/seasons/200/extended":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "success",
@@ -578,7 +611,7 @@ func TestGetSeriesMetadata_UsesEmbeddedTranslationsWithoutDedicatedEndpoint(t *t
 	}
 }
 
-func TestGetEpisodes_TranslatesConcurrently(t *testing.T) {
+func TestGetEpisodes_TranslatesViaBulkEndpoint(t *testing.T) {
 	t.Parallel()
 
 	var translationCalls atomic.Int32
@@ -613,9 +646,10 @@ func TestGetEpisodes_TranslatesConcurrently(t *testing.T) {
 		}
 	}
 
-	// Verify translation endpoint was called for each episode.
-	if got := translationCalls.Load(); got != 3 {
-		t.Fatalf("episode translation calls = %d, want 3", got)
+	// The bulk translated endpoint must be hit exactly once for the whole
+	// season — not once per episode (the old N+1).
+	if got := translationCalls.Load(); got != 1 {
+		t.Fatalf("bulk translation calls = %d, want 1 (no per-episode N+1)", got)
 	}
 }
 
@@ -663,44 +697,32 @@ func TestGetEpisodes_PartialTranslationFailureKeepsOriginalData(t *testing.T) {
 				"data":   map[string]any{"token": "test-token"},
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/series/100/extended":
+		case r.Method == http.MethodGet && r.URL.Path == "/series/100/episodes/official":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "success",
 				"data": map[string]any{
-					"id":               100,
-					"name":             "Original Title",
-					"originalLanguage": "jpn",
-					"seasons": []map[string]any{
-						{"id": 200, "seriesId": 100, "number": 1, "type": map[string]any{"id": 1}},
-					},
-				},
-			})
-
-		case r.Method == http.MethodGet && r.URL.Path == "/seasons/200/extended":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "success",
-				"data": map[string]any{
-					"id": 200, "number": 1,
-					"type": map[string]any{"id": 1},
+					"series": map[string]any{"id": 100, "originalLanguage": "jpn"},
 					"episodes": []map[string]any{
 						{"id": 301, "name": "JP Ep 1", "overview": "JP ov 1", "number": 1, "seasonNumber": 1},
 						{"id": 302, "name": "JP Ep 2", "overview": "JP ov 2", "number": 2, "seasonNumber": 1},
 					},
 				},
+				"links": map[string]any{"next": nil},
 			})
 
-		case r.URL.Path == "/episodes/301/translations/eng":
+		case r.Method == http.MethodGet && r.URL.Path == "/series/100/episodes/official/eng":
+			// Translated bulk list: ep 301 is translated; ep 302 has no
+			// translation (empty name/overview), so its original must be kept.
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "success",
-				"data":   map[string]any{"name": "English Ep 1", "overview": "EN ov 1"},
-			})
-
-		case r.URL.Path == "/episodes/302/translations/eng":
-			// Simulate a 404 — translation not available.
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":  "failure",
-				"message": "translation not found",
+				"data": map[string]any{
+					"series": map[string]any{"id": 100, "originalLanguage": "jpn"},
+					"episodes": []map[string]any{
+						{"id": 301, "name": "English Ep 1", "overview": "EN ov 1", "number": 1, "seasonNumber": 1},
+						{"id": 302, "name": "", "overview": "", "number": 2, "seasonNumber": 1},
+					},
+				},
+				"links": map[string]any{"next": nil},
 			})
 
 		default:
@@ -736,5 +758,155 @@ func TestGetEpisodes_PartialTranslationFailureKeepsOriginalData(t *testing.T) {
 	}
 	if episodes[1].Overview != "JP ov 2" {
 		t.Errorf("episodes[1].Overview = %q, want %q (original kept after failure)", episodes[1].Overview, "JP ov 2")
+	}
+}
+
+// TestGetEpisodes_CachesAcrossSeasons verifies the bulk endpoint is fetched once
+// for a multi-season series even when the server requests each season
+// separately — the cache prevents a full-series re-fetch per season.
+func TestGetEpisodes_CachesAcrossSeasons(t *testing.T) {
+	t.Parallel()
+
+	var baseCalls, transCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success", "data": map[string]any{"token": "test-token"},
+			})
+
+		case r.URL.Path == "/series/100/episodes/official":
+			baseCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"series": map[string]any{"id": 100, "originalLanguage": "jpn"},
+					"episodes": []map[string]any{
+						{"id": 301, "name": "JP S1E1", "number": 1, "seasonNumber": 1},
+						{"id": 401, "name": "JP S2E1", "number": 1, "seasonNumber": 2},
+					},
+				},
+				"links": map[string]any{"next": nil},
+			})
+
+		case r.URL.Path == "/series/100/episodes/official/eng":
+			transCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"series": map[string]any{"id": 100, "originalLanguage": "jpn"},
+					"episodes": []map[string]any{
+						{"id": 301, "name": "EN S1E1", "number": 1, "seasonNumber": 1},
+						{"id": 401, "name": "EN S2E1", "number": 1, "seasonNumber": 2},
+					},
+				},
+				"links": map[string]any{"next": nil},
+			})
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(1000)
+	client.SetBaseURL(server.URL)
+	p := NewProviderWithClient(client)
+
+	for _, season := range []int{1, 2} {
+		eps, err := p.GetEpisodes(context.Background(), metadata.EpisodesRequest{
+			ProviderIDs:  map[string]string{"tvdb": "100"},
+			SeasonNumber: season,
+			Language:     "en",
+		})
+		if err != nil {
+			t.Fatalf("GetEpisodes(season=%d) error = %v", season, err)
+		}
+		if len(eps) != 1 {
+			t.Fatalf("season %d: len(episodes) = %d, want 1", season, len(eps))
+		}
+		wantTitle := map[int]string{1: "EN S1E1", 2: "EN S2E1"}[season]
+		if eps[0].Title != wantTitle {
+			t.Errorf("season %d: Title = %q, want %q", season, eps[0].Title, wantTitle)
+		}
+	}
+
+	// Despite two GetEpisodes calls, each bulk endpoint is fetched exactly once.
+	if got := baseCalls.Load(); got != 1 {
+		t.Errorf("base bulk calls = %d, want 1 (cache should serve season 2)", got)
+	}
+	if got := transCalls.Load(); got != 1 {
+		t.Errorf("translated bulk calls = %d, want 1 (cache should serve season 2)", got)
+	}
+}
+
+// TestGetEpisodes_Paginates verifies a series whose episodes span multiple pages
+// is fully assembled across pages.
+func TestGetEpisodes_Paginates(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success", "data": map[string]any{"token": "test-token"},
+			})
+
+		case r.URL.Path == "/series/100/episodes/official":
+			page := r.URL.Query().Get("page")
+			if page == "0" {
+				next := "page1"
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": "success",
+					"data": map[string]any{
+						"series": map[string]any{"id": 100, "originalLanguage": "eng"},
+						"episodes": []map[string]any{
+							{"id": 301, "name": "Ep 1", "number": 1, "seasonNumber": 1},
+						},
+					},
+					"links": map[string]any{"next": next},
+				})
+				return
+			}
+			// page 1 (final).
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"series": map[string]any{"id": 100, "originalLanguage": "eng"},
+					"episodes": []map[string]any{
+						{"id": 302, "name": "Ep 2", "number": 2, "seasonNumber": 1},
+					},
+				},
+				"links": map[string]any{"next": nil},
+			})
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(1000)
+	client.SetBaseURL(server.URL)
+	p := NewProviderWithClient(client)
+
+	// Language "en" matches originalLanguage "eng" → base list only, two pages.
+	eps, err := p.GetEpisodes(context.Background(), metadata.EpisodesRequest{
+		ProviderIDs:  map[string]string{"tvdb": "100"},
+		SeasonNumber: 1,
+		Language:     "en",
+	})
+	if err != nil {
+		t.Fatalf("GetEpisodes() error = %v", err)
+	}
+	if len(eps) != 2 {
+		t.Fatalf("len(episodes) = %d, want 2 (both pages assembled)", len(eps))
+	}
+	if eps[0].Title != "Ep 1" || eps[1].Title != "Ep 2" {
+		t.Errorf("titles = [%q, %q], want [Ep 1, Ep 2]", eps[0].Title, eps[1].Title)
 	}
 }
