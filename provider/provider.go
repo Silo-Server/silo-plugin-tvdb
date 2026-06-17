@@ -15,6 +15,10 @@ import (
 
 const maxCast = 20
 
+// officialSeasonType is TVDB's "Aired Order" season-type slug (Type.ID == 1),
+// used by the bulk episodes endpoint to mirror the prior season filter.
+const officialSeasonType = "official"
+
 // Provider implements SearchProvider, MetadataProvider, ImageProvider,
 // and EpisodeProvider for the TVDB v4 API.
 type Provider struct {
@@ -482,74 +486,54 @@ func (p *Provider) GetEpisodes(ctx context.Context, req metadata.EpisodesRequest
 		return nil, fmt.Errorf("tvdb: invalid TVDB ID: %w", err)
 	}
 
-	// Find the season ID matching the requested season number.
-	series, err := p.client.GetSeriesExtended(ctx, id)
+	// Fetch the whole series' episodes in one bulk (paginated, cached) call
+	// instead of one translation round-trip per episode. officialSeasonType
+	// mirrors the previous "official / Aired Order" (Type.ID == 1) filter.
+	base, err := p.client.getAllSeriesEpisodes(ctx, id, officialSeasonType, "")
 	if err != nil {
 		return nil, err
 	}
 
-	var seasonID int
-	for _, s := range series.Seasons {
-		if s.Type.ID == 1 && s.Number == req.SeasonNumber {
-			seasonID = s.ID
-			break
+	// When a non-native language is requested, pull the translated bulk list
+	// once and index it by episode ID to overlay onto the base records.
+	translated := map[int]EpisodeBaseRecord{}
+	if needsTranslation(req.Language, base.series.OriginalLanguage) {
+		lang3 := toLang3(req.Language)
+		tr, err := p.client.getAllSeriesEpisodes(ctx, id, officialSeasonType, lang3)
+		if err != nil {
+			return nil, err
+		}
+		for _, ep := range tr.episodes {
+			translated[ep.ID] = ep
 		}
 	}
-	if seasonID == 0 {
-		return nil, nil
-	}
 
-	season, err := p.client.GetSeasonExtended(ctx, seasonID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Pre-allocate results; each goroutine writes to its own index.
-	episodes := make([]metadata.EpisodeResult, len(season.Episodes))
-	for i, ep := range season.Episodes {
-		episodes[i] = metadata.EpisodeResult{
+	var episodes []metadata.EpisodeResult
+	for _, ep := range base.episodes {
+		if ep.SeasonNumber != req.SeasonNumber {
+			continue
+		}
+		title, overview := ep.Name, ep.Overview
+		// Overlay the translation only when present, so an episode without a
+		// translation keeps its original-language title/overview.
+		if tr, ok := translated[ep.ID]; ok {
+			if tr.Name != "" {
+				title = tr.Name
+			}
+			if tr.Overview != "" {
+				overview = tr.Overview
+			}
+		}
+		episodes = append(episodes, metadata.EpisodeResult{
 			ProviderIDs:   map[string]string{"tvdb": strconv.Itoa(ep.ID)},
 			SeasonNumber:  ep.SeasonNumber,
 			EpisodeNumber: ep.Number,
-			Title:         ep.Name,
-			Overview:      ep.Overview,
+			Title:         title,
+			Overview:      overview,
 			Runtime:       ep.Runtime,
 			AirDate:       ep.Aired,
 			StillPath:     ep.Image,
-		}
-	}
-
-	if needsTranslation(req.Language, series.OriginalLanguage) {
-		lang3 := toLang3(req.Language)
-		g, gctx := errgroup.WithContext(ctx)
-		g.SetLimit(5)
-
-		for i, ep := range season.Episodes {
-			g.Go(func() error {
-				tr, err := p.client.GetEpisodeTranslation(gctx, ep.ID, lang3)
-				if err != nil {
-					if gctx.Err() != nil {
-						return gctx.Err()
-					}
-					slog.Warn("tvdb: episode translation fetch failed",
-						"episode_id", ep.ID, "lang", lang3, "error", err)
-					return nil
-				}
-				if tr != nil {
-					if tr.Name != "" {
-						episodes[i].Title = tr.Name
-					}
-					if tr.Overview != "" {
-						episodes[i].Overview = tr.Overview
-					}
-				}
-				return nil
-			})
-		}
-
-		if err := g.Wait(); err != nil {
-			return nil, err
-		}
+		})
 	}
 
 	return episodes, nil
