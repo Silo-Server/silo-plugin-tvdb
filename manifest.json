@@ -1,6 +1,6 @@
 {
   "plugin_id": "silo.tvdb",
-  "version": "1.2.19",
+  "version": "1.2.21",
   "checksum": "__CHECKSUM__",
   "silo_api_version": "v1",
   "supported_platforms": [
@@ -29,6 +29,18 @@
           "season": 2,
           "episode": 2
         }
+      }
+    },
+    {
+      "type": "image_resolver.v1",
+      "id": "tvdb",
+      "display_name": "TVDB Images",
+      "description": "Resolves tvdb:// image paths to TheTVDB image URLs.",
+      "metadata": {
+        "schemes": [
+          "tvdb"
+        ],
+        "priority": 100
       }
     }
   ],
