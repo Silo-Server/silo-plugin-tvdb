@@ -61,6 +61,9 @@ type MetadataResult struct {
 	FirstAirDate      string
 	LastAirDate       string
 	AirTime           string
+	// ShowStatus is the TVDB series lifecycle status verbatim ("Continuing",
+	// "Ended", "Upcoming"); the host normalizes spellings.
+	ShowStatus string
 }
 
 // PersonDetailRequest is passed to person detail lookups.
