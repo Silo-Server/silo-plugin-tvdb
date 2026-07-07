@@ -910,3 +910,50 @@ func TestGetEpisodes_Paginates(t *testing.T) {
 		t.Errorf("titles = [%q, %q], want [Ep 1, Ep 2]", eps[0].Title, eps[1].Title)
 	}
 }
+
+func TestGetSeriesMetadataCarriesShowStatus(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data":   map[string]any{"token": "test-token"},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/series/100/extended":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"id":       100,
+					"name":     "Series",
+					"overview": "Series overview",
+					"status": map[string]any{
+						"id":   1,
+						"name": "Continuing",
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(1000)
+	client.SetBaseURL(server.URL)
+	p := NewProviderWithClient(client)
+
+	result, err := p.GetMetadata(context.Background(), metadata.MetadataRequest{
+		ProviderIDs: map[string]string{"tvdb": "100"},
+		ContentType: "series",
+	})
+	if err != nil {
+		t.Fatalf("GetMetadata() error = %v", err)
+	}
+	if result.ShowStatus != "Continuing" {
+		t.Fatalf("ShowStatus = %q, want %q", result.ShowStatus, "Continuing")
+	}
+}
