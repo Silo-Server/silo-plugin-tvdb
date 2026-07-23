@@ -47,35 +47,36 @@ type MetadataRequest struct {
 
 // MetadataResult carries structured metadata from a single provider.
 type MetadataResult struct {
-	HasMetadata       bool
-	ProviderIDs       map[string]string
-	Title             string
-	OriginalTitle     string
-	SortTitle         string
-	Overview          string
-	Tagline           string
-	Year              int
-	Runtime           int
-	Genres            []string
-	Studios           []string
-	Networks          []string
-	Countries         []string
-	OriginalLanguage  string
-	TitleAliases      []TitleAlias
-	TitleLanguage     string
-	TitleIsFallback   bool
-	ContentRating     string
-	Ratings           Ratings
-	People            []models.ItemPerson
-	PosterPath        string
-	PosterThumbhash   string
-	BackdropPath      string
-	BackdropThumbhash string
-	LogoPath          string
-	SeasonCount       int
-	FirstAirDate      string
-	LastAirDate       string
-	AirTime           string
+	HasMetadata          bool
+	ProviderIDs          map[string]string
+	Title                string
+	OriginalTitle        string
+	SortTitle            string
+	Overview             string
+	Tagline              string
+	Year                 int
+	Runtime              int
+	Genres               []string
+	Studios              []string
+	Networks             []string
+	Countries            []string
+	OriginalLanguage     string
+	TitleAliases         []TitleAlias
+	TitleAliasesComplete bool
+	TitleLanguage        string
+	TitleIsFallback      bool
+	ContentRating        string
+	Ratings              Ratings
+	People               []models.ItemPerson
+	PosterPath           string
+	PosterThumbhash      string
+	BackdropPath         string
+	BackdropThumbhash    string
+	LogoPath             string
+	SeasonCount          int
+	FirstAirDate         string
+	LastAirDate          string
+	AirTime              string
 	// ShowStatus is the TVDB series lifecycle status verbatim ("Continuing",
 	// "Ended", "Upcoming"); the host normalizes spellings.
 	ShowStatus string

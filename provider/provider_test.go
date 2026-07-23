@@ -151,6 +151,7 @@ func TestFillRemoteIDsUsesTypeAndSourceNameWithoutOverwrite(t *testing.T) {
 		{Type: 0, ID: "30773-the-yogi-bear-show", SourceName: "TheMovieDB.com"},
 		{Type: 0, ID: "not-an-imdb-id", SourceName: "imdb.com"},
 		{Type: 0, ID: "tt123", SourceName: "imdb.com"},
+		{Type: 0, ID: "nm1234567", SourceName: "imdb.com"},
 		{Type: 0, ID: "201992", SourceName: "TheMovieDB.com"},
 		{Type: 0, ID: "TT18076310", SourceName: "imdb.com"},
 	})
@@ -563,6 +564,9 @@ func TestGetSeriesMetadata_TranslatesNonNativeLanguage(t *testing.T) {
 	}
 	if result.TitleLanguage != "en" || result.TitleIsFallback || result.OriginalLanguage != "ja" || result.OriginalTitle != "Original Japanese Title" {
 		t.Fatalf("title language metadata = title:%q fallback:%v original_language:%q original_title:%q", result.TitleLanguage, result.TitleIsFallback, result.OriginalLanguage, result.OriginalTitle)
+	}
+	if !result.TitleAliasesComplete {
+		t.Fatal("full TVDB extended response must mark title aliases complete")
 	}
 	foundOriginal, foundEnglish := false, false
 	for _, alias := range result.TitleAliases {
