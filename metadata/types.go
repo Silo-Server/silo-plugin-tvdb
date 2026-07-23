@@ -17,12 +17,24 @@ type SearchQuery struct {
 
 // SearchResult is returned from SearchProvider.Search().
 type SearchResult struct {
-	Name        string
-	Year        int
-	ProviderIDs map[string]string
-	ImageURL    string
-	Overview    string
-	Provider    string
+	Name             string
+	OriginalTitle    string
+	TitleAliases     []TitleAlias
+	TitleLanguage    string
+	TitleIsFallback  bool
+	OriginalLanguage string
+	Year             int
+	ProviderIDs      map[string]string
+	ImageURL         string
+	Overview         string
+	Provider         string
+}
+
+// TitleAlias is a provider-confirmed title for the same work.
+type TitleAlias struct {
+	Title    string
+	Language string
+	Kind     string
 }
 
 // MetadataRequest is passed to MetadataProvider.GetMetadata().
@@ -49,6 +61,9 @@ type MetadataResult struct {
 	Networks          []string
 	Countries         []string
 	OriginalLanguage  string
+	TitleAliases      []TitleAlias
+	TitleLanguage     string
+	TitleIsFallback   bool
 	ContentRating     string
 	Ratings           Ratings
 	People            []models.ItemPerson

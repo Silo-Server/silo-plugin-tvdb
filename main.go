@@ -105,14 +105,18 @@ func (s *metadataServer) Search(ctx context.Context, req *pluginv1.SearchMetadat
 			return nil, err
 		}
 		response.Results = append(response.Results, &pluginv1.ProviderSearchResult{
-			ProviderId:    result.ProviderIDs["tvdb"],
-			ItemType:      req.GetItemType(),
-			Title:         result.Name,
-			Year:          int32(result.Year),
-			Overview:      result.Overview,
-			ProviderIds:   providerIDs,
-			ImageUrl:      tvdbCanonicalPath(result.ImageURL),
-			OriginalTitle: "",
+			ProviderId:       result.ProviderIDs["tvdb"],
+			ItemType:         req.GetItemType(),
+			Title:            result.Name,
+			Year:             int32(result.Year),
+			Overview:         result.Overview,
+			ProviderIds:      providerIDs,
+			ImageUrl:         tvdbCanonicalPath(result.ImageURL),
+			OriginalTitle:    result.OriginalTitle,
+			TitleAliases:     aliasesToProto(result.TitleAliases),
+			TitleLanguage:    result.TitleLanguage,
+			TitleIsFallback:  result.TitleIsFallback,
+			OriginalLanguage: result.OriginalLanguage,
 		})
 	}
 	return response, nil
@@ -357,7 +361,21 @@ func metadataItemFromResult(result *metadata.MetadataResult, itemType string) (*
 		AirTime:           result.AirTime,
 		Status:            result.ShowStatus,
 		People:            peopleToRecords(result.People),
+		TitleAliases:      aliasesToProto(result.TitleAliases),
+		TitleLanguage:     result.TitleLanguage,
+		TitleIsFallback:   result.TitleIsFallback,
 	}, nil
+}
+
+func aliasesToProto(aliases []metadata.TitleAlias) []*pluginv1.TitleAlias {
+	out := make([]*pluginv1.TitleAlias, 0, len(aliases))
+	for _, alias := range aliases {
+		if strings.TrimSpace(alias.Title) == "" {
+			continue
+		}
+		out = append(out, &pluginv1.TitleAlias{Title: alias.Title, Language: alias.Language, Kind: alias.Kind})
+	}
+	return out
 }
 
 func personDetailRecordFromResult(result *metadata.PersonDetailResult) (*pluginv1.PersonDetailRecord, error) {
