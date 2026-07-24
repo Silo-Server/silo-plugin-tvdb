@@ -17,12 +17,24 @@ type SearchQuery struct {
 
 // SearchResult is returned from SearchProvider.Search().
 type SearchResult struct {
-	Name        string
-	Year        int
-	ProviderIDs map[string]string
-	ImageURL    string
-	Overview    string
-	Provider    string
+	Name             string
+	OriginalTitle    string
+	TitleAliases     []TitleAlias
+	TitleLanguage    string
+	TitleIsFallback  bool
+	OriginalLanguage string
+	Year             int
+	ProviderIDs      map[string]string
+	ImageURL         string
+	Overview         string
+	Provider         string
+}
+
+// TitleAlias is a provider-confirmed title for the same work.
+type TitleAlias struct {
+	Title    string
+	Language string
+	Kind     string
 }
 
 // MetadataRequest is passed to MetadataProvider.GetMetadata().
@@ -35,32 +47,36 @@ type MetadataRequest struct {
 
 // MetadataResult carries structured metadata from a single provider.
 type MetadataResult struct {
-	HasMetadata       bool
-	ProviderIDs       map[string]string
-	Title             string
-	OriginalTitle     string
-	SortTitle         string
-	Overview          string
-	Tagline           string
-	Year              int
-	Runtime           int
-	Genres            []string
-	Studios           []string
-	Networks          []string
-	Countries         []string
-	OriginalLanguage  string
-	ContentRating     string
-	Ratings           Ratings
-	People            []models.ItemPerson
-	PosterPath        string
-	PosterThumbhash   string
-	BackdropPath      string
-	BackdropThumbhash string
-	LogoPath          string
-	SeasonCount       int
-	FirstAirDate      string
-	LastAirDate       string
-	AirTime           string
+	HasMetadata          bool
+	ProviderIDs          map[string]string
+	Title                string
+	OriginalTitle        string
+	SortTitle            string
+	Overview             string
+	Tagline              string
+	Year                 int
+	Runtime              int
+	Genres               []string
+	Studios              []string
+	Networks             []string
+	Countries            []string
+	OriginalLanguage     string
+	TitleAliases         []TitleAlias
+	TitleAliasesComplete bool
+	TitleLanguage        string
+	TitleIsFallback      bool
+	ContentRating        string
+	Ratings              Ratings
+	People               []models.ItemPerson
+	PosterPath           string
+	PosterThumbhash      string
+	BackdropPath         string
+	BackdropThumbhash    string
+	LogoPath             string
+	SeasonCount          int
+	FirstAirDate         string
+	LastAirDate          string
+	AirTime              string
 	// ShowStatus is the TVDB series lifecycle status verbatim ("Continuing",
 	// "Ended", "Upcoming"); the host normalizes spellings.
 	ShowStatus string

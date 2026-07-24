@@ -50,7 +50,7 @@ func (p *Provider) Search(ctx context.Context, query metadata.SearchQuery) ([]me
 		if err != nil {
 			return nil, fmt.Errorf("tvdb: invalid TVDB ID %q: %w", tvdbID, err)
 		}
-		return p.searchByID(ctx, id, query.ContentType)
+		return p.searchByID(ctx, id, query.ContentType, query.Language)
 	}
 
 	// IMDb ID lookup.
@@ -59,7 +59,7 @@ func (p *Provider) Search(ctx context.Context, query metadata.SearchQuery) ([]me
 		if err != nil || id == 0 {
 			return nil, err
 		}
-		return p.searchByID(ctx, id, query.ContentType)
+		return p.searchByID(ctx, id, query.ContentType, query.Language)
 	}
 
 	// TMDB ID lookup.
@@ -68,7 +68,7 @@ func (p *Provider) Search(ctx context.Context, query metadata.SearchQuery) ([]me
 		if err != nil || id == 0 {
 			return nil, err
 		}
-		return p.searchByID(ctx, id, query.ContentType)
+		return p.searchByID(ctx, id, query.ContentType, query.Language)
 	}
 
 	// Title search.
@@ -79,37 +79,20 @@ func (p *Provider) Search(ctx context.Context, query metadata.SearchQuery) ([]me
 	return nil, nil
 }
 
-func (p *Provider) searchByID(ctx context.Context, id int, contentType string) ([]metadata.SearchResult, error) {
-	ids := map[string]string{"tvdb": strconv.Itoa(id)}
-
+func (p *Provider) searchByID(ctx context.Context, id int, contentType, language string) ([]metadata.SearchResult, error) {
 	switch contentType {
 	case "movie":
-		movie, err := p.client.GetMovieExtended(ctx, id)
+		movie, err := p.getMovieMetadata(ctx, id, language)
 		if err != nil {
 			return nil, err
 		}
-		fillRemoteIDs(ids, movie.RemoteIDs)
-		return []metadata.SearchResult{{
-			Name:        movie.Name,
-			Year:        extractYear(movie.Year),
-			ProviderIDs: ids,
-			ImageURL:    movie.Image,
-			Provider:    p.Slug(),
-		}}, nil
+		return []metadata.SearchResult{searchResultFromMetadata(movie, p.Slug())}, nil
 	case "series":
-		series, err := p.client.GetSeriesExtended(ctx, id)
+		series, err := p.getSeriesMetadata(ctx, id, language)
 		if err != nil {
 			return nil, err
 		}
-		fillRemoteIDs(ids, series.RemoteIDs)
-		return []metadata.SearchResult{{
-			Name:        series.Name,
-			Year:        extractYear(series.Year),
-			ProviderIDs: ids,
-			ImageURL:    series.Image,
-			Overview:    series.Overview,
-			Provider:    p.Slug(),
-		}}, nil
+		return []metadata.SearchResult{searchResultFromMetadata(series, p.Slug())}, nil
 	}
 	return nil, nil
 }
@@ -125,15 +108,92 @@ func (p *Provider) searchByTitle(ctx context.Context, query metadata.SearchQuery
 		ids := map[string]string{"tvdb": r.TVDBID}
 		fillRemoteIDs(ids, r.RemoteIDs)
 		out = append(out, metadata.SearchResult{
-			Name:        r.Name,
-			Year:        extractYear(r.Year),
-			ProviderIDs: ids,
-			ImageURL:    r.ImageURL,
-			Overview:    r.Overview,
-			Provider:    p.Slug(),
+			Name:             r.Name,
+			OriginalTitle:    r.Name,
+			TitleAliases:     stringAliases(r.Aliases),
+			TitleLanguage:    toLang1(r.PrimaryLanguage),
+			TitleIsFallback:  strings.TrimSpace(query.Language) != "" && !languageMatches(query.Language, r.PrimaryLanguage),
+			OriginalLanguage: toLang1(r.PrimaryLanguage),
+			Year:             extractYear(r.Year),
+			ProviderIDs:      ids,
+			ImageURL:         r.ImageURL,
+			Overview:         r.Overview,
+			Provider:         p.Slug(),
 		})
 	}
 	return out, nil
+}
+
+func searchResultFromMetadata(result *metadata.MetadataResult, provider string) metadata.SearchResult {
+	return metadata.SearchResult{
+		Name:             result.Title,
+		OriginalTitle:    result.OriginalTitle,
+		TitleAliases:     append([]metadata.TitleAlias(nil), result.TitleAliases...),
+		TitleLanguage:    result.TitleLanguage,
+		TitleIsFallback:  result.TitleIsFallback,
+		OriginalLanguage: result.OriginalLanguage,
+		Year:             result.Year,
+		ProviderIDs:      result.ProviderIDs,
+		ImageURL:         result.PosterPath,
+		Overview:         result.Overview,
+		Provider:         provider,
+	}
+}
+
+func stringAliases(values []string) []metadata.TitleAlias {
+	aliases := make([]metadata.TitleAlias, 0, len(values))
+	for _, value := range values {
+		aliases = appendTitleAlias(aliases, value, "", "alternate")
+	}
+	return aliases
+}
+
+func extendedAliases(localized, original, originalLanguage string, values []Alias, translations *TranslationData) []metadata.TitleAlias {
+	aliases := make([]metadata.TitleAlias, 0, len(values)+1)
+	if !strings.EqualFold(strings.TrimSpace(localized), strings.TrimSpace(original)) {
+		aliases = appendTitleAlias(aliases, original, toLang1(originalLanguage), "original")
+	}
+	for _, value := range values {
+		aliases = appendTitleAlias(aliases, value.Name, toLang1(value.Language), "alternate")
+	}
+	if translations != nil {
+		for _, translation := range translations.NameTranslations {
+			kind := "localized"
+			if translation.IsAlias {
+				kind = "alternate"
+			}
+			aliases = appendTitleAlias(aliases, translation.Name, toLang1(translation.Language), kind)
+		}
+	}
+	return aliases
+}
+
+func appendTitleAlias(aliases []metadata.TitleAlias, title, language, kind string) []metadata.TitleAlias {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return aliases
+	}
+	for _, alias := range aliases {
+		if strings.EqualFold(strings.TrimSpace(alias.Title), title) {
+			return aliases
+		}
+	}
+	return append(aliases, metadata.TitleAlias{Title: title, Language: language, Kind: kind})
+}
+
+func titleIsFallback(requested, originalLanguage, title, original string) bool {
+	return strings.TrimSpace(requested) != "" && !languageMatches(requested, originalLanguage) &&
+		strings.EqualFold(strings.TrimSpace(title), strings.TrimSpace(original))
+}
+
+func resolvedTitleLanguage(requested, originalLanguage, title, original string) string {
+	if titleIsFallback(requested, originalLanguage, title, original) {
+		return toLang1(originalLanguage)
+	}
+	if requested != "" {
+		return toLang1(requested)
+	}
+	return toLang1(originalLanguage)
 }
 
 func (p *Provider) findByRemoteID(ctx context.Context, remoteID, mediaType string) (int, error) {
@@ -207,7 +267,7 @@ func (p *Provider) GetPersonDetail(ctx context.Context, req metadata.PersonDetai
 	}
 
 	providerIDs := map[string]string{"tvdb": strconv.Itoa(person.ID)}
-	fillRemoteIDs(providerIDs, person.RemoteIDs)
+	fillPersonRemoteIDs(providerIDs, person.RemoteIDs)
 
 	return &metadata.PersonDetailResult{
 		Name:        person.Name,
@@ -250,14 +310,19 @@ func (p *Provider) getMovieMetadata(ctx context.Context, id int, lang string) (*
 	}
 
 	result := &metadata.MetadataResult{
-		HasMetadata:      true,
-		Title:            title,
-		OriginalLanguage: metadata.NormalizeOriginalLanguage(movie.OriginalLanguage),
-		Overview:         overview,
-		Runtime:          movie.Runtime,
-		Year:             extractYear(movie.Year),
-		ContentRating:    findContentRating(movie.ContentRatings),
-		ProviderIDs:      map[string]string{"tvdb": strconv.Itoa(movie.ID)},
+		HasMetadata:          true,
+		Title:                title,
+		OriginalTitle:        movie.Name,
+		OriginalLanguage:     toLang1(movie.OriginalLanguage),
+		TitleAliases:         extendedAliases(title, movie.Name, movie.OriginalLanguage, movie.Aliases, movie.Translations),
+		TitleAliasesComplete: true,
+		TitleLanguage:        resolvedTitleLanguage(lang, movie.OriginalLanguage, title, movie.Name),
+		TitleIsFallback:      titleIsFallback(lang, movie.OriginalLanguage, title, movie.Name),
+		Overview:             overview,
+		Runtime:              movie.Runtime,
+		Year:                 extractYear(movie.Year),
+		ContentRating:        findContentRating(movie.ContentRatings),
+		ProviderIDs:          map[string]string{"tvdb": strconv.Itoa(movie.ID)},
 	}
 
 	if movie.FirstRelease != nil && movie.FirstRelease.Date != "" && result.Year == 0 {
@@ -325,18 +390,23 @@ func (p *Provider) getSeriesMetadata(ctx context.Context, id int, lang string) (
 	}
 
 	result := &metadata.MetadataResult{
-		HasMetadata:      true,
-		Title:            title,
-		OriginalLanguage: metadata.NormalizeOriginalLanguage(series.OriginalLanguage),
-		Overview:         overview,
-		Year:             extractYear(series.Year),
-		ContentRating:    findContentRating(series.ContentRatings),
-		SeasonCount:      officialCount,
-		FirstAirDate:     series.FirstAired,
-		LastAirDate:      series.LastAired,
-		AirTime:          series.AirsTime,
-		ShowStatus:       series.Status.Name,
-		ProviderIDs:      map[string]string{"tvdb": strconv.Itoa(series.ID)},
+		HasMetadata:          true,
+		Title:                title,
+		OriginalTitle:        series.Name,
+		OriginalLanguage:     toLang1(series.OriginalLanguage),
+		TitleAliases:         extendedAliases(title, series.Name, series.OriginalLanguage, series.Aliases, series.Translations),
+		TitleAliasesComplete: true,
+		TitleLanguage:        resolvedTitleLanguage(lang, series.OriginalLanguage, title, series.Name),
+		TitleIsFallback:      titleIsFallback(lang, series.OriginalLanguage, title, series.Name),
+		Overview:             overview,
+		Year:                 extractYear(series.Year),
+		ContentRating:        findContentRating(series.ContentRatings),
+		SeasonCount:          officialCount,
+		FirstAirDate:         series.FirstAired,
+		LastAirDate:          series.LastAired,
+		AirTime:              series.AirsTime,
+		ShowStatus:           series.Status.Name,
+		ProviderIDs:          map[string]string{"tvdb": strconv.Itoa(series.ID)},
 	}
 
 	fillRemoteIDs(result.ProviderIDs, series.RemoteIDs)
@@ -647,20 +717,58 @@ func convertCharacters(chars []Character) []models.ItemPerson {
 }
 
 func fillRemoteIDs(ids map[string]string, remoteIDs []RemoteID) {
+	fillRemoteIDsWithIMDbPrefix(ids, remoteIDs, "tt")
+}
+
+func fillPersonRemoteIDs(ids map[string]string, remoteIDs []RemoteID) {
+	fillRemoteIDsWithIMDbPrefix(ids, remoteIDs, "nm")
+}
+
+func fillRemoteIDsWithIMDbPrefix(ids map[string]string, remoteIDs []RemoteID, imdbPrefix string) {
 	for _, r := range remoteIDs {
-		if r.ID == "" {
+		provider := remoteIDProvider(r)
+		id, ok := canonicalRemoteProviderID(provider, r.ID, imdbPrefix)
+		if !ok {
 			continue
 		}
-		switch remoteIDProvider(r) {
+		switch provider {
 		case "imdb":
 			if ids["imdb"] == "" {
-				ids["imdb"] = r.ID
+				ids["imdb"] = id
 			}
 		case "tmdb":
 			if ids["tmdb"] == "" {
-				ids["tmdb"] = r.ID
+				ids["tmdb"] = id
 			}
 		}
+	}
+}
+
+func canonicalRemoteProviderID(provider, value, imdbPrefix string) (string, bool) {
+	value = strings.TrimSpace(value)
+	switch provider {
+	case "tmdb":
+		id, err := strconv.Atoi(value)
+		if err != nil || id <= 0 {
+			return "", false
+		}
+		return strconv.Itoa(id), true
+	case "imdb":
+		value = strings.ToLower(value)
+		if len(value) < 9 || len(value) > 12 || value[:2] != imdbPrefix {
+			return "", false
+		}
+		digits := value[2:]
+		if len(digits) < 7 || len(digits) > 10 {
+			return "", false
+		}
+		id, err := strconv.ParseUint(digits, 10, 64)
+		if err != nil || id == 0 {
+			return "", false
+		}
+		return value, true
+	default:
+		return "", false
 	}
 }
 
@@ -791,7 +899,7 @@ func languageMatches(requested, candidate string) bool {
 	if req == got {
 		return true
 	}
-	return len(req) >= 2 && len(got) >= 2 && req[:2] == got[:2]
+	return toLang1(req) == toLang1(got)
 }
 
 func normalizeLanguageTag(value string) string {

@@ -105,14 +105,18 @@ func (s *metadataServer) Search(ctx context.Context, req *pluginv1.SearchMetadat
 			return nil, err
 		}
 		response.Results = append(response.Results, &pluginv1.ProviderSearchResult{
-			ProviderId:    result.ProviderIDs["tvdb"],
-			ItemType:      req.GetItemType(),
-			Title:         result.Name,
-			Year:          int32(result.Year),
-			Overview:      result.Overview,
-			ProviderIds:   providerIDs,
-			ImageUrl:      tvdbCanonicalPath(result.ImageURL),
-			OriginalTitle: "",
+			ProviderId:       result.ProviderIDs["tvdb"],
+			ItemType:         req.GetItemType(),
+			Title:            result.Name,
+			Year:             int32(result.Year),
+			Overview:         result.Overview,
+			ProviderIds:      providerIDs,
+			ImageUrl:         tvdbCanonicalPath(result.ImageURL),
+			OriginalTitle:    result.OriginalTitle,
+			TitleAliases:     aliasesToProto(result.TitleAliases),
+			TitleLanguage:    result.TitleLanguage,
+			TitleIsFallback:  result.TitleIsFallback,
+			OriginalLanguage: result.OriginalLanguage,
 		})
 	}
 	return response, nil
@@ -329,35 +333,50 @@ func metadataItemFromResult(result *metadata.MetadataResult, itemType string) (*
 	}
 
 	return &pluginv1.MetadataItem{
-		ProviderId:        result.ProviderIDs["tvdb"],
-		ItemType:          itemType,
-		Title:             result.Title,
-		OriginalTitle:     result.OriginalTitle,
-		SortTitle:         result.SortTitle,
-		Year:              int32(result.Year),
-		Overview:          result.Overview,
-		Tagline:           result.Tagline,
-		Runtime:           int32(result.Runtime),
-		Genres:            append([]string(nil), result.Genres...),
-		Studios:           append([]string(nil), result.Studios...),
-		Networks:          append([]string(nil), result.Networks...),
-		Countries:         append([]string(nil), result.Countries...),
-		OriginalLanguage:  result.OriginalLanguage,
-		ContentRating:     result.ContentRating,
-		ProviderIds:       providerIDs,
-		Ratings:           ratingsStruct(result.Ratings),
-		PosterPath:        tvdbCanonicalPath(result.PosterPath),
-		PosterThumbhash:   result.PosterThumbhash,
-		BackdropPath:      tvdbCanonicalPath(result.BackdropPath),
-		BackdropThumbhash: result.BackdropThumbhash,
-		LogoPath:          tvdbCanonicalPath(result.LogoPath),
-		SeasonCount:       int32(result.SeasonCount),
-		FirstAirDate:      result.FirstAirDate,
-		LastAirDate:       result.LastAirDate,
-		AirTime:           result.AirTime,
-		Status:            result.ShowStatus,
-		People:            peopleToRecords(result.People),
+		ProviderId:           result.ProviderIDs["tvdb"],
+		ItemType:             itemType,
+		Title:                result.Title,
+		OriginalTitle:        result.OriginalTitle,
+		SortTitle:            result.SortTitle,
+		Year:                 int32(result.Year),
+		Overview:             result.Overview,
+		Tagline:              result.Tagline,
+		Runtime:              int32(result.Runtime),
+		Genres:               append([]string(nil), result.Genres...),
+		Studios:              append([]string(nil), result.Studios...),
+		Networks:             append([]string(nil), result.Networks...),
+		Countries:            append([]string(nil), result.Countries...),
+		OriginalLanguage:     result.OriginalLanguage,
+		ContentRating:        result.ContentRating,
+		ProviderIds:          providerIDs,
+		Ratings:              ratingsStruct(result.Ratings),
+		PosterPath:           tvdbCanonicalPath(result.PosterPath),
+		PosterThumbhash:      result.PosterThumbhash,
+		BackdropPath:         tvdbCanonicalPath(result.BackdropPath),
+		BackdropThumbhash:    result.BackdropThumbhash,
+		LogoPath:             tvdbCanonicalPath(result.LogoPath),
+		SeasonCount:          int32(result.SeasonCount),
+		FirstAirDate:         result.FirstAirDate,
+		LastAirDate:          result.LastAirDate,
+		AirTime:              result.AirTime,
+		Status:               result.ShowStatus,
+		People:               peopleToRecords(result.People),
+		TitleAliases:         aliasesToProto(result.TitleAliases),
+		TitleAliasesComplete: result.TitleAliasesComplete,
+		TitleLanguage:        result.TitleLanguage,
+		TitleIsFallback:      result.TitleIsFallback,
 	}, nil
+}
+
+func aliasesToProto(aliases []metadata.TitleAlias) []*pluginv1.TitleAlias {
+	out := make([]*pluginv1.TitleAlias, 0, len(aliases))
+	for _, alias := range aliases {
+		if strings.TrimSpace(alias.Title) == "" {
+			continue
+		}
+		out = append(out, &pluginv1.TitleAlias{Title: alias.Title, Language: alias.Language, Kind: alias.Kind})
+	}
+	return out
 }
 
 func personDetailRecordFromResult(result *metadata.PersonDetailResult) (*pluginv1.PersonDetailRecord, error) {

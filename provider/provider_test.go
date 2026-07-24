@@ -27,16 +27,18 @@ func TestProviderSearchByTitleIncludesRemoteIDs(t *testing.T) {
 				},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/search":
-			if r.URL.Query().Get("query") != "The Rookie: Feds" {
-				t.Fatalf("query = %q, want The Rookie: Feds", r.URL.Query().Get("query"))
+			if r.URL.Query().Get("query") != "10 Tokyo Warriors" {
+				t.Fatalf("query = %q, want 10 Tokyo Warriors", r.URL.Query().Get("query"))
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "success",
 				"data": []map[string]any{{
-					"name":     "The Rookie: Feds",
-					"year":     "2022",
-					"tvdb_id":  "420105",
-					"overview": "A spinoff series.",
+					"name":             "倒凶十将伝",
+					"aliases":          []string{"10 Tokyo Warriors"},
+					"primary_language": "jpn",
+					"year":             "1999",
+					"tvdb_id":          "420105",
+					"overview":         "Ten warriors defend Tokyo.",
 					"remote_ids": []map[string]any{
 						{"type": 12, "id": "201992", "sourceName": "TheMovieDB.com"},
 						{"type": 2, "id": "tt18076310", "sourceName": "IMDB"},
@@ -54,8 +56,9 @@ func TestProviderSearchByTitleIncludesRemoteIDs(t *testing.T) {
 	p := NewProviderWithClient(client)
 
 	results, err := p.Search(context.Background(), metadata.SearchQuery{
-		Title:       "The Rookie: Feds",
+		Title:       "10 Tokyo Warriors",
 		ContentType: "series",
+		Language:    "en",
 	})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
@@ -66,6 +69,12 @@ func TestProviderSearchByTitleIncludesRemoteIDs(t *testing.T) {
 	ids := results[0].ProviderIDs
 	if ids["tvdb"] != "420105" || ids["tmdb"] != "201992" || ids["imdb"] != "tt18076310" {
 		t.Fatalf("provider ids = %+v, want tvdb/tmdb/imdb", ids)
+	}
+	if results[0].Name != "倒凶十将伝" || results[0].OriginalLanguage != "ja" || !results[0].TitleIsFallback {
+		t.Fatalf("title metadata = (%q, %q, %v)", results[0].Name, results[0].OriginalLanguage, results[0].TitleIsFallback)
+	}
+	if len(results[0].TitleAliases) != 1 || results[0].TitleAliases[0].Title != "10 Tokyo Warriors" {
+		t.Fatalf("aliases = %#v, want English search alias", results[0].TitleAliases)
 	}
 }
 
@@ -139,11 +148,15 @@ func TestFillRemoteIDsUsesTypeAndSourceNameWithoutOverwrite(t *testing.T) {
 
 	ids = map[string]string{}
 	fillRemoteIDs(ids, []RemoteID{
-		{Type: 0, ID: "source-tmdb", SourceName: "TheMovieDB.com"},
-		{Type: 0, ID: "tt-source", SourceName: "imdb.com"},
+		{Type: 0, ID: "30773-the-yogi-bear-show", SourceName: "TheMovieDB.com"},
+		{Type: 0, ID: "not-an-imdb-id", SourceName: "imdb.com"},
+		{Type: 0, ID: "tt123", SourceName: "imdb.com"},
+		{Type: 0, ID: "nm1234567", SourceName: "imdb.com"},
+		{Type: 0, ID: "201992", SourceName: "TheMovieDB.com"},
+		{Type: 0, ID: "TT18076310", SourceName: "imdb.com"},
 	})
 
-	if ids["tmdb"] != "source-tmdb" || ids["imdb"] != "tt-source" {
+	if ids["tmdb"] != "201992" || ids["imdb"] != "tt18076310" {
 		t.Fatalf("provider ids = %+v, want source-name tmdb/imdb", ids)
 	}
 }
@@ -549,6 +562,20 @@ func TestGetSeriesMetadata_TranslatesNonNativeLanguage(t *testing.T) {
 	if result.Overview != "English series overview" {
 		t.Fatalf("Overview = %q, want %q", result.Overview, "English series overview")
 	}
+	if result.TitleLanguage != "en" || result.TitleIsFallback || result.OriginalLanguage != "ja" || result.OriginalTitle != "Original Japanese Title" {
+		t.Fatalf("title language metadata = title:%q fallback:%v original_language:%q original_title:%q", result.TitleLanguage, result.TitleIsFallback, result.OriginalLanguage, result.OriginalTitle)
+	}
+	if !result.TitleAliasesComplete {
+		t.Fatal("full TVDB extended response must mark title aliases complete")
+	}
+	foundOriginal, foundEnglish := false, false
+	for _, alias := range result.TitleAliases {
+		foundOriginal = foundOriginal || alias.Title == "Original Japanese Title" && alias.Language == "ja" && alias.Kind == "original"
+		foundEnglish = foundEnglish || alias.Title == "English Series Title" && alias.Language == "en" && alias.Kind == "localized"
+	}
+	if !foundOriginal || !foundEnglish {
+		t.Fatalf("title aliases = %#v, want Japanese original and English localized aliases", result.TitleAliases)
+	}
 }
 
 func TestGetSeriesMetadata_SkipsTranslationWhenLanguageMatchesOriginal(t *testing.T) {
@@ -573,6 +600,9 @@ func TestGetSeriesMetadata_SkipsTranslationWhenLanguageMatchesOriginal(t *testin
 	// Should use original data without fetching translations.
 	if result.Title != "Original Japanese Title" {
 		t.Fatalf("Title = %q, want %q", result.Title, "Original Japanese Title")
+	}
+	if result.TitleLanguage != "ja" || result.TitleIsFallback || result.OriginalLanguage != "ja" {
+		t.Fatalf("native title metadata = (%q, %v, %q)", result.TitleLanguage, result.TitleIsFallback, result.OriginalLanguage)
 	}
 	if translationCalls.Load() != 0 {
 		t.Fatalf("translation endpoint called %d times, want 0", translationCalls.Load())

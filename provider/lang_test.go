@@ -85,6 +85,8 @@ func TestLanguageMatches(t *testing.T) {
 		{name: "exact normalized", requested: "eng", candidate: "eng", want: true},
 		{name: "region to base", requested: "fr-CA", candidate: "fra", want: true},
 		{name: "base to region", requested: "fr", candidate: "fr-CA", want: true},
+		{name: "ISO 639-1 to ISO 639-2", requested: "ja", candidate: "jpn", want: true},
+		{name: "similar prefix is not a language match", requested: "ja", candidate: "jav", want: false},
 		{name: "different languages", requested: "en", candidate: "fra", want: false},
 	}
 
